@@ -60,7 +60,8 @@ JUKEBOX_PRETRAINED_MODEL_ARCHIVE_LIST = [
 
 def empty_cache():
     gc.collect()
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def get_range(list):
@@ -680,7 +681,7 @@ class JukeboxVQVAE(PreTrainedModel):
 
     def sample(self, n_samples):
         music_tokens = [
-            torch.randint(0, self.codebook_dim, size=(n_samples, *music_tokens_shape), device="cpu")
+            torch.randint(0, self.codebook_dim, size=(n_samples, *music_tokens_shape))
             for music_tokens_shape in self.music_tokens_shapes
         ]
         return self.decode(music_tokens)
@@ -1683,9 +1684,7 @@ class JukeboxConditionalAutoregressive(nn.Module):
         N, _ = n_samples, self.input_dims
 
         if not self.audio_conditioning:
-            audio_conditioning = torch.zeros((N, 1, self.width), dtype=torch.float).to(
-                "cpu" if torch.cuda.is_available() else "cpu"
-            )
+            audio_conditioning = torch.zeros((N, 1, self.width), dtype=torch.float)
 
         with torch.no_grad():
             sampled_tokens, tokens = [], None
@@ -2536,7 +2535,7 @@ class JukeboxPrior(nn.Module):
             lyric_acts = self.lyric_encoder.proj_in(lyric_acts)
             lyric_encoder_states = self.lyric_encoder.final_layer_norm(lyric_acts)
             if sample:
-                self.lyric_encoder.cpu()
+                #self.lyric_encoder.cpu()
                 if fp16:
                     lyric_encoder_states = lyric_encoder_states.half()
         else:
@@ -2554,7 +2553,7 @@ class JukeboxPrior(nn.Module):
                 lyric_encoder_states.view(-1, self.lyric_enc_dim), target_lyrics.view(-1)
             ) / np.log(2.0)
         else:
-            lyric_enc_loss = torch.tensor(0.0, device="cuda")
+            lyric_enc_loss = torch.tensor(0.0)
         return lyric_enc_loss
 
     def forward_tokens(
@@ -2731,14 +2730,13 @@ def get_alignment(music_tokens, labels, prior, level, fp16, config):
             del w_hop
         w = torch.cat(w_hops, dim=0)
         del w_hops
-        alignment_hop = w.float().cpu().numpy()
+        alignment_hop = w.float().numpy()
         del w
 
         # alignment_hop has shape (bs, n_ctx, nb_relevant_lyric_tokens)
         # indices_hop is a list of len=bs, each entry of len hps.nb_relevant_lyric_tokens
         indices_hops[start] = indices_hop
         alignment_hops[start] = alignment_hop
-    prior.cpu()
     empty_cache()
 
     # Combine attn for each hop into attn for full range
@@ -2973,7 +2971,7 @@ class JukeboxModel(JukeboxPreTrainedModel):
                 music_tokens, labels[level], offset, sampling_kwargs[level], level, total_length, hop_length
             )
 
-            self.priors[level].to("cpu")
+            #self.priors[level].to("cpu")
             empty_cache()
             self.vqvae.to(music_tokens[level].device)
             # Decode sample
@@ -2981,7 +2979,7 @@ class JukeboxModel(JukeboxPreTrainedModel):
                 raw_audio = self.vqvae.decode(
                     music_tokens[level:], start_level=level, bs_chunks=music_tokens[level].shape[0]
                 )
-            self.vqvae.to("cpu")
+            #self.vqvae.to("cpu")
 
             if save_results:
                 logdir = f"{self.start_time}/level_{level}"
@@ -3030,6 +3028,6 @@ class JukeboxModel(JukeboxPreTrainedModel):
             music_tokens = self.vqvae.encode(
                 raw_audio, start_level=0, end_level=len(self.priors), bs_chunks=raw_audio.shape[0]
             )
-        self.vqvae.to("cpu")
+        #self.vqvae.to("cpu")
         music_tokens = self._sample(music_tokens, labels, sample_levels, **sampling_kwargs)
         return music_tokens
